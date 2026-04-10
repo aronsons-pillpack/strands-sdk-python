@@ -562,6 +562,49 @@ async def test_event_loop_cycle_creates_spans(
 
 @patch("strands.event_loop.event_loop.get_tracer")
 @pytest.mark.asyncio
+async def test_event_loop_passes_guardrail_trace_to_tracer(
+    mock_get_tracer,
+    agent,
+    model,
+    mock_tracer,
+    agenerator,
+    alist,
+):
+    """Test that guardrail trace data from the stream is passed to end_model_invoke_span."""
+    mock_get_tracer.return_value = mock_tracer
+    mock_tracer.start_event_loop_cycle_span.return_value = MagicMock()
+    mock_tracer.start_model_invoke_span.return_value = MagicMock()
+
+    trace_data = {
+        "guardrail": {
+            "inputAssessment": {
+                "abc123": {"topicPolicy": {"topics": [{"name": "Blocked", "type": "DENY", "action": "BLOCKED"}]}}
+            }
+        }
+    }
+    model.stream.return_value = agenerator(
+        [
+            {"contentBlockDelta": {"delta": {"text": "blocked"}}},
+            {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "guardrail_intervened"}},
+            {
+                "metadata": {
+                    "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+                    "metrics": {"latencyMs": 10},
+                    "trace": trace_data,
+                }
+            },
+        ]
+    )
+
+    await alist(strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={}))
+
+    mock_tracer.end_model_invoke_span.assert_called_once()
+    assert mock_tracer.end_model_invoke_span.call_args[1]["trace"] == trace_data
+
+
+@patch("strands.event_loop.event_loop.get_tracer")
+@pytest.mark.asyncio
 async def test_event_loop_tracing_with_model_error(
     mock_get_tracer,
     agent,

@@ -267,6 +267,34 @@ class TestModelStopReason:
         assert event["stop"] == (stop_reason, message, usage, metrics)
         assert event.is_callback_event is False
 
+    def test_trace_defaults_to_none(self):
+        """Test that trace property defaults to None when not provided."""
+        event = ModelStopReason(
+            stop_reason=Mock(spec=StopReason),
+            message=Mock(spec=Message),
+            usage=Mock(spec=Usage),
+            metrics=Mock(spec=Metrics),
+        )
+        assert event.trace is None
+
+    def test_trace_property(self):
+        """Test that trace property returns guardrail trace data when provided."""
+        trace_data = {
+            "guardrail": {
+                "inputAssessment": {
+                    "abc123": {"topicPolicy": {"topics": [{"name": "Blocked", "type": "DENY", "action": "BLOCKED"}]}}
+                }
+            }
+        }
+        event = ModelStopReason(
+            stop_reason=Mock(spec=StopReason),
+            message=Mock(spec=Message),
+            usage=Mock(spec=Usage),
+            metrics=Mock(spec=Metrics),
+            trace=trace_data,
+        )
+        assert event.trace == trace_data
+
 
 class TestEventLoopStopEvent:
     """Tests for EventLoopStopEvent."""

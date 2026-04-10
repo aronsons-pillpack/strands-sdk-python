@@ -560,10 +560,11 @@ def test_extract_usage_metrics():
         "metrics": {"latencyMs": 0},
     }
 
-    tru_usage, tru_metrics = strands.event_loop.streaming.extract_usage_metrics(event)
+    tru_usage, tru_metrics, tru_trace = strands.event_loop.streaming.extract_usage_metrics(event)
     exp_usage, exp_metrics = event["usage"], event["metrics"]
 
     assert tru_usage == exp_usage and tru_metrics == exp_metrics
+    assert tru_trace is None
 
 
 def test_extract_usage_metrics_with_cache_tokens():
@@ -572,10 +573,11 @@ def test_extract_usage_metrics_with_cache_tokens():
         "metrics": {"latencyMs": 0},
     }
 
-    tru_usage, tru_metrics = strands.event_loop.streaming.extract_usage_metrics(event)
+    tru_usage, tru_metrics, tru_trace = strands.event_loop.streaming.extract_usage_metrics(event)
     exp_usage, exp_metrics = event["usage"], event["metrics"]
 
     assert tru_usage == exp_usage and tru_metrics == exp_metrics
+    assert tru_trace is None
 
 
 def test_extract_usage_metrics_without_metrics():
@@ -584,11 +586,12 @@ def test_extract_usage_metrics_without_metrics():
         "usage": {"inputTokens": 5, "outputTokens": 2, "totalTokens": 7},
     }
 
-    tru_usage, tru_metrics = strands.event_loop.streaming.extract_usage_metrics(event)
+    tru_usage, tru_metrics, tru_trace = strands.event_loop.streaming.extract_usage_metrics(event)
     exp_usage = {"inputTokens": 5, "outputTokens": 2, "totalTokens": 7}
     exp_metrics = {"latencyMs": 0}
 
     assert tru_usage == exp_usage and tru_metrics == exp_metrics
+    assert tru_trace is None
 
 
 def test_extract_usage_metrics_without_usage():
@@ -597,22 +600,44 @@ def test_extract_usage_metrics_without_usage():
         "metrics": {"latencyMs": 100},
     }
 
-    tru_usage, tru_metrics = strands.event_loop.streaming.extract_usage_metrics(event)
+    tru_usage, tru_metrics, tru_trace = strands.event_loop.streaming.extract_usage_metrics(event)
     exp_usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
     exp_metrics = {"latencyMs": 100}
 
     assert tru_usage == exp_usage and tru_metrics == exp_metrics
+    assert tru_trace is None
 
 
 def test_extract_usage_metrics_empty_metadata():
     """Test extract_usage_metrics when both fields are missing."""
     event = {}
 
-    tru_usage, tru_metrics = strands.event_loop.streaming.extract_usage_metrics(event)
+    tru_usage, tru_metrics, tru_trace = strands.event_loop.streaming.extract_usage_metrics(event)
     exp_usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
     exp_metrics = {"latencyMs": 0}
 
     assert tru_usage == exp_usage and tru_metrics == exp_metrics
+    assert tru_trace is None
+
+
+def test_extract_usage_metrics_with_trace():
+    """Test extract_usage_metrics extracts guardrail trace data when present."""
+    trace_data = {
+        "guardrail": {
+            "inputAssessment": {
+                "abc123": {"topicPolicy": {"topics": [{"name": "Blocked", "type": "DENY", "action": "BLOCKED"}]}}
+            }
+        }
+    }
+    event = {
+        "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+        "metrics": {"latencyMs": 50},
+        "trace": trace_data,
+    }
+
+    tru_usage, tru_metrics, tru_trace = strands.event_loop.streaming.extract_usage_metrics(event)
+
+    assert tru_trace == trace_data
 
 
 @pytest.mark.parametrize(
@@ -1357,6 +1382,39 @@ async def test_stream_messages_normalizes_messages(agenerator, alist):
         {"content": [{"toolUse": {"name": "INVALID_TOOL_NAME"}}], "role": "assistant"},
         {"content": [{"toolUse": {"name": "INVALID_TOOL_NAME"}}], "role": "assistant"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_process_stream_propagates_trace_to_model_stop_reason(agenerator, alist):
+    """Test that guardrail trace data from metadata flows through to ModelStopReason."""
+    trace_data = {
+        "guardrail": {
+            "inputAssessment": {
+                "abc123": {"topicPolicy": {"topics": [{"name": "Blocked", "type": "DENY", "action": "BLOCKED"}]}}
+            }
+        }
+    }
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "blocked"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "guardrail_intervened"}},
+        {
+            "metadata": {
+                "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+                "metrics": {"latencyMs": 10},
+                "trace": trace_data,
+            }
+        },
+    ]
+
+    events = await alist(strands.event_loop.streaming.process_stream(agenerator(response)))
+    stop_event = events[-1]
+
+    assert isinstance(stop_event, ModelStopReason)
+    assert stop_event["stop"][0] == "guardrail_intervened"
+    assert stop_event.trace == trace_data
 
 
 @pytest.mark.asyncio

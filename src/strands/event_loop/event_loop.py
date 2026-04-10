@@ -352,6 +352,7 @@ async def _handle_model_execution(
                     yield event
 
                 stop_reason, message, usage, metrics = event["stop"]
+                trace = getattr(event, "trace", None)
                 invocation_state.setdefault("request_state", {})
 
                 after_model_call_event = AfterModelCallEvent(
@@ -371,13 +372,13 @@ async def _handle_model_execution(
                         "stop_reason=<%s>, retry_requested=<True> | hook requested model retry",
                         stop_reason,
                     )
-                    tracer.end_model_invoke_span(model_invoke_span, message, usage, metrics, stop_reason)
+                    tracer.end_model_invoke_span(model_invoke_span, message, usage, metrics, stop_reason, trace=trace)
                     continue  # Retry the model call
 
                 if stop_reason == "max_tokens":
                     message = recover_message_on_max_tokens_reached(message)
 
-                tracer.end_model_invoke_span(model_invoke_span, message, usage, metrics, stop_reason)
+                tracer.end_model_invoke_span(model_invoke_span, message, usage, metrics, stop_reason, trace=trace)
                 break  # Success! Break out of retry loop
 
             except Exception as e:

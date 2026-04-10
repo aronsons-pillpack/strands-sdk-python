@@ -25,6 +25,7 @@ from ..types._events import (
 )
 from ..types.citations import CitationsContentBlock
 from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
+from ..types.guardrails import Trace
 from ..types.streaming import (
     ContentBlockDeltaEvent,
     ContentBlockStart,
@@ -362,15 +363,17 @@ def handle_redact_content(event: RedactContentEvent, state: dict[str, Any]) -> N
         state["message"]["content"] = [{"text": event["redactAssistantContentMessage"]}]
 
 
-def extract_usage_metrics(event: MetadataEvent, time_to_first_byte_ms: int | None = None) -> tuple[Usage, Metrics]:
-    """Extracts usage metrics from the metadata chunk.
+def extract_usage_metrics(
+    event: MetadataEvent, time_to_first_byte_ms: int | None = None
+) -> tuple[Usage, Metrics, Trace | None]:
+    """Extracts usage metrics and guardrail trace from the metadata chunk.
 
     Args:
         event: metadata.
         time_to_first_byte_ms: time to get the first byte from the model in milliseconds
 
     Returns:
-        The extracted usage metrics and latency.
+        Tuple of (usage, metrics, trace). trace is the guardrail trace dict if present, else None.
     """
     # MetadataEvent has total=False, making all fields optional, but Usage and Metrics types
     # have Required fields. Provide defaults to handle cases where custom models don't
@@ -380,7 +383,9 @@ def extract_usage_metrics(event: MetadataEvent, time_to_first_byte_ms: int | Non
     if time_to_first_byte_ms:
         metrics["timeToFirstByteMs"] = time_to_first_byte_ms
 
-    return usage, metrics
+    trace = event.get("trace")
+
+    return usage, metrics, trace
 
 
 async def process_stream(
@@ -412,6 +417,7 @@ async def process_stream(
 
     usage: Usage = Usage(inputTokens=0, outputTokens=0, totalTokens=0)
     metrics: Metrics = Metrics(latencyMs=0, timeToFirstByteMs=0)
+    trace: Trace | None = None
 
     async for chunk in chunks:
         # Check for cancellation during stream processing
@@ -447,11 +453,11 @@ async def process_stream(
             time_to_first_byte_ms = (
                 int(1000 * (first_byte_time - start_time)) if (start_time and first_byte_time) else None
             )
-            usage, metrics = extract_usage_metrics(chunk["metadata"], time_to_first_byte_ms)
+            usage, metrics, trace = extract_usage_metrics(chunk["metadata"], time_to_first_byte_ms)
         elif "redactContent" in chunk:
             handle_redact_content(chunk["redactContent"], state)
 
-    yield ModelStopReason(stop_reason=stop_reason, message=state["message"], usage=usage, metrics=metrics)
+    yield ModelStopReason(stop_reason=stop_reason, message=state["message"], usage=usage, metrics=metrics, trace=trace)
 
 
 async def stream_messages(

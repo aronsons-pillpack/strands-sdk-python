@@ -350,6 +350,30 @@ def test_end_model_invoke_span(mock_span):
     mock_span.end.assert_called_once()
 
 
+def test_end_model_invoke_span_with_guardrail_trace(mock_span):
+    """Test that guardrail trace data is recorded as a span event."""
+    tracer = Tracer()
+    message = {"role": "assistant", "content": [{"text": "Blocked"}]}
+    usage = Usage(inputTokens=5, outputTokens=3, totalTokens=8)
+    metrics = Metrics(latencyMs=10)
+    stop_reason: StopReason = "guardrail_intervened"
+    trace = {
+        "guardrail": {
+            "inputAssessment": {
+                "abc123": {"topicPolicy": {"topics": [{"name": "Blocked", "type": "DENY", "action": "BLOCKED"}]}}
+            }
+        }
+    }
+
+    tracer.end_model_invoke_span(mock_span, message, usage, metrics, stop_reason, trace=trace)
+
+    # Verify the guardrail assessment event was recorded
+    event_calls = [call for call in mock_span.add_event.call_args_list if call[0][0] == "gen_ai.guardrail.assessment"]
+    assert len(event_calls) == 1
+    assert "gen_ai.guardrail.trace" in event_calls[0][1]["attributes"]
+    assert json.loads(event_calls[0][1]["attributes"]["gen_ai.guardrail.trace"]) == trace["guardrail"]
+
+
 def test_end_model_invoke_span_latest_conventions(mock_span, monkeypatch):
     """Test ending a model invoke span with the latest semantic conventions."""
     with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):

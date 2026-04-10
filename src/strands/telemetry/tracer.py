@@ -17,6 +17,7 @@ from opentelemetry.trace import Span, StatusCode
 
 from ..agent.agent_result import AgentResult
 from ..types.content import ContentBlock, Message, Messages
+from ..types.guardrails import Trace as GuardrailTrace
 from ..types.interrupt import InterruptResponseContent
 from ..types.multiagent import MultiAgentInput
 from ..types.streaming import Metrics, StopReason, Usage
@@ -331,6 +332,7 @@ class Tracer:
         usage: Usage,
         metrics: Metrics,
         stop_reason: StopReason,
+        trace: GuardrailTrace | None = None,
     ) -> None:
         """End a model invocation span with results and metrics.
 
@@ -340,6 +342,7 @@ class Tracer:
             usage: Token usage information from the model call.
             metrics: Metrics from the model call.
             stop_reason: The reason the model stopped generating.
+            trace: Optional trace data from the model response (e.g. guardrail assessments).
         """
         if not span or not span.is_recording():
             return
@@ -354,6 +357,14 @@ class Tracer:
 
         # Add optional attributes if they have values
         self._add_optional_usage_and_metrics_attributes(attributes, usage, metrics)
+
+        # Record guardrail trace data if present
+        if trace and "guardrail" in trace:
+            self._add_event(
+                span,
+                "gen_ai.guardrail.assessment",
+                event_attributes={"gen_ai.guardrail.trace": serialize(trace["guardrail"])},
+            )
 
         if self.use_latest_genai_conventions:
             self._add_event(
@@ -527,9 +538,7 @@ class Tracer:
         event_loop_cycle_id = str(invocation_state.get("event_loop_cycle_id"))
         parent_span = parent_span if parent_span else invocation_state.get("event_loop_parent_span")
 
-        attributes: dict[str, AttributeValue] = self._get_common_attributes(
-            operation_name="execute_event_loop_cycle"
-        )
+        attributes: dict[str, AttributeValue] = self._get_common_attributes(operation_name="execute_event_loop_cycle")
         attributes["event_loop.cycle_id"] = event_loop_cycle_id
 
         if custom_trace_attributes:

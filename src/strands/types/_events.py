@@ -16,6 +16,7 @@ from ..telemetry import EventLoopMetrics
 from .citations import Citation
 from .content import Message
 from .event_loop import Metrics, StopReason, Usage
+from .guardrails import Trace
 from .streaming import ContentBlockDelta, StreamEvent
 from .tools import ToolResult, ToolUse
 
@@ -191,7 +192,7 @@ class ReasoningSignatureStreamEvent(ModelStreamEvent):
 
 
 class ModelStopReason(TypedEvent):
-    """Event emitted during reasoning signature streaming."""
+    """Event emitted when the model stops generating."""
 
     def __init__(
         self,
@@ -199,6 +200,7 @@ class ModelStopReason(TypedEvent):
         message: Message,
         usage: Usage,
         metrics: Metrics,
+        trace: Trace | None = None,
     ) -> None:
         """Initialize with the final execution results.
 
@@ -207,8 +209,15 @@ class ModelStopReason(TypedEvent):
             message: Final message from the model
             usage: Usage information from the model
             metrics: Execution metrics and performance data
+            trace: Optional trace data (e.g. guardrail assessments) from the model response metadata
         """
         super().__init__({"stop": (stop_reason, message, usage, metrics)})
+        self._trace = trace
+
+    @property
+    def trace(self) -> Trace | None:
+        """Optional trace data from the model response metadata (e.g. guardrail assessments)."""
+        return self._trace
 
     @property
     @override
